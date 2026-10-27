@@ -1,0 +1,23 @@
+{
+  "name": "obsidian-ai-contributions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Accept or reject AI callouts directly inside Obsidian notes.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "tsc --noEmit && node esbuild.config.mjs",
+    "check": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
+    "jsdom": "16.7.0",
+    "obsidian": "1.14.4",
+    "typescript": "6.0.3"
+  }
+}

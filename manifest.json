@@ -1,0 +1,9 @@
+{
+  "id": "ai-contributions",
+  "name": "AI Contributions",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Review AI callouts with inline Accept and Reject buttons.",
+  "author": "ja384",
+  "isDesktopOnly": false
+}
