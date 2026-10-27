@@ -2,6 +2,7 @@ import type { EditorView } from "@codemirror/view";
 import type { ReviewTarget } from "./callouts";
 import { createReviewControls } from "./controls";
 import type { EditorReviewOptions } from "./editor-extension";
+import { DEFAULT_CALLOUT_TAG, normalizeCalloutTag } from "./settings-model";
 
 interface Binding {
   title: HTMLElement;
@@ -48,7 +49,8 @@ export class RenderedEditorControls {
   private bindings(): Binding[] {
     if (this.destroyed) return [];
     const result: Binding[] = [];
-    for (const callout of this.view.contentDOM.querySelectorAll<HTMLElement>('.callout[data-callout="ai" i]')) {
+    const tag = normalizeCalloutTag(this.options.calloutTag ?? DEFAULT_CALLOUT_TAG);
+    for (const callout of this.view.contentDOM.querySelectorAll<HTMLElement>(`.callout[data-callout="${tag}" i]`)) {
       if (callout.closest(".markdown-embed") || callout.parentElement?.closest(".callout")) continue;
       const title = callout.querySelector<HTMLElement>(":scope > .callout-title");
       const inner = title?.querySelector(":scope > .callout-title-inner");
@@ -60,7 +62,7 @@ export class RenderedEditorControls {
       if (candidates.length !== 1) continue;
       const target = candidates[0]!;
       const header = target.source.slice(target.callout.from, target.callout.headerEnd);
-      const expectedTitle = header.replace(/^>[ \t]?\[!ai\][+-]?[ \t]*/i, "").trim() || "ai";
+      const expectedTitle = header.replace(/^>[ \t]?\[![^\]]+\][+-]?[ \t]*/i, "").trim() || tag;
       // Plain titles cover the vault's contribution/date format. Formatted titles
       // remain reviewable through the source editor and Reading view.
       if (inner.textContent?.trim().toLowerCase() !== expectedTitle.toLowerCase()) continue;

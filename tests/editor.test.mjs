@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
-import { EditorState, Transaction } from "@codemirror/state";
+import { Compartment, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createReviewExtension } from "../src/editor-extension.ts";
 import { applyChange, reviewChange } from "../src/callouts.ts";
 
-test("CodeMirror widgets review the document and refresh after edits", async () => {
+function setupEditorDOM() {
   const dom = new JSDOM("<body></body>", { pretendToBeVisual: true });
   const { window } = dom;
   for (const key of ["window", "document", "MutationObserver", "HTMLElement", "Node", "Text", "Window"]) {
@@ -17,6 +17,12 @@ test("CodeMirror widgets review the document and refresh after edits", async () 
   globalThis.getComputedStyle = window.getComputedStyle.bind(window);
   window.Range.prototype.getClientRects = () => [];
   window.Range.prototype.getBoundingClientRect = () => ({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 });
+  return dom;
+}
+
+test("CodeMirror widgets review the document and refresh after edits", async () => {
+  const dom = setupEditorDOM();
+  const { window } = dom;
   let error;
   const source = "Human.\n\n> [!ai]+ Contribution\n> Keep me.\n\nAfter.\n";
   let userEvent;
@@ -59,4 +65,23 @@ test("CodeMirror widgets review the document and refresh after edits", async () 
     view.destroy();
     dom.window.close();
   }
+});
+
+test("CodeMirror switches to a custom tag without changing note text", async () => {
+  const dom = setupEditorDOM();
+  const source = "> [!ai]\n> Old body\n\n> [!assistant]\n> Custom body\n";
+  const compartment = new Compartment();
+  const extension = (calloutTag) => createReviewExtension({ calloutTag,
+    onReview: async (view, target, action) => view.dispatch({ changes: reviewChange(view.state.doc.toString(), target, action, calloutTag) }),
+    onError: assert.fail });
+  const view = new EditorView({ state: EditorState.create({ doc: source, extensions: [compartment.of(extension("ai"))] }), parent: dom.window.document.body });
+  try {
+    assert.equal(view.dom.querySelectorAll(".ai-contributions-actions").length, 1);
+    view.dispatch({ effects: compartment.reconfigure(extension("assistant")) });
+    assert.equal(view.state.doc.toString(), source);
+    assert.equal(view.dom.querySelectorAll(".ai-contributions-actions").length, 1);
+    view.dom.querySelector(".ai-contributions-reject").click();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(view.state.doc.toString(), "> [!ai]\n> Old body\n\n");
+  } finally { view.destroy(); dom.window.close(); }
 });

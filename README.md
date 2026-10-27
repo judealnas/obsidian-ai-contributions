@@ -2,6 +2,7 @@
 
 Accept or reject AI contributions directly in a note.
 Each `[!ai]` callout has **Accept** and **Reject** buttons beside its title, including folded callouts.
+The callout tag is configurable; `ai` is the default.
 The controls are designed for Reading view, Live Preview, and Source mode.
 TaskNotes is not required.
 
@@ -31,9 +32,23 @@ Keep this paragraph and its [[Related note]] link.
 
 Obsidian 1.5.0 or newer is required.
 
+### With BRAT
+
+1. Install and enable **BRAT** from **Settings → Community plugins → Browse**.
+2. Open the command palette and run **BRAT: Add a beta plugin for testing** (the command may be grouped under **Plugins**).
+3. Enter `https://github.com/judealnas/obsidian-ai-contributions` and choose the latest release.
+4. Click **Add Plugin**, then enable **AI Contributions** under **Settings → Community plugins** if it is not already enabled.
+5. Use BRAT's update command or automatic update settings to receive later releases.
+
+BRAT installs the compiled files from [GitHub releases](https://github.com/judealnas/obsidian-ai-contributions/releases); no local build is needed.
+See the [official BRAT installation guide](https://tfthacker.com/brat-quick-guide) for details.
+
+### Manual installation
+
+Download the plugin ZIP from [the latest release](https://github.com/judealnas/obsidian-ai-contributions/releases/latest).
 For a source checkout, first run `npm ci` and `npm run package` to create the installable ZIP.
 
-1. Extract `dist/ai-contributions-0.1.0.zip`.
+1. Extract `ai-contributions-0.2.0.zip` (or `dist/ai-contributions-0.2.0.zip` after a local build).
 2. Copy the `ai-contributions` folder into `<your vault>/.obsidian/plugins/`.
 3. Reload Obsidian.
 4. Enable **AI Contributions** in **Settings → Community plugins**.
@@ -57,6 +72,20 @@ To install the packaged build:
 The installer copies plugin files and backs up any previous versions under `.obsidian/plugin-backups/`.
 It leaves note files and the enabled-plugin list unchanged.
 
+## Settings
+
+Open **Settings → AI Contributions → Callout tag**.
+Enter the name without `[!` and `]`, then click **Apply**.
+For example, `assistant` enables review buttons on `> [!assistant]+ Contribution`.
+
+The default is `ai`; an empty field resets it to `ai`.
+Names accept letters, numbers, hyphens, and underscores, and are matched without regard to case.
+The choice is saved per vault and applies to Reading view, Live Preview, and Source mode.
+Open editor controls and Reading views refresh when it is applied.
+
+Changing the setting selects which callout type receives review buttons; existing callouts are not renamed.
+Only the configured type is reviewable, so selecting a built-in name such as `note` will add review buttons to those callouts too.
+
 ## Review and undo
 
 - Click **Accept** to promote one contribution into ordinary Markdown.
@@ -78,7 +107,7 @@ No file or directory is deleted by the plugin.
 
 This version targets the vault's explicit, top-level AI callout format:
 
-- The header starts at the beginning of a line with `> [!ai]`.
+- The header starts at the beginning of a line with `> [!ai]`, or the configured tag.
 - `[!AI]`, expanded `+`, collapsed `-`, and custom titles are supported.
 - Every body line starts with `>`; quoted empty lines use `>` or `> `.
 - Separate callouts and surrounding paragraphs with an unquoted blank line.

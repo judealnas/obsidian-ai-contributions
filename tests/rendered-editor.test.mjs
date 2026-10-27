@@ -53,3 +53,18 @@ test("Live Preview ignores ambiguous mappings, mismatched titles, and embedded s
     assert.equal(content.querySelector("button"), null);
   } finally { binder.destroy(); dom.window.close(); }
 });
+
+test("rendered Live Preview uses custom tags and their default titles", () => {
+  const dom = new JSDOM("<div id='editor'><div id='content'></div></div>");
+  const source = "> [!assistant]\n> Body\n";
+  const target = { source, callout: findAiCallouts(source, "assistant")[0] };
+  const content = dom.window.document.getElementById("content");
+  content.innerHTML = "<div class='callout' data-callout='ai'><div class='callout-title'><div class='callout-title-inner'>Ai</div></div></div><div class='callout' data-callout='ASSISTANT'><div class='callout-title'><div class='callout-title-inner'>Assistant</div></div></div>";
+  const view = { dom: dom.window.document.getElementById("editor"), contentDOM: content, posAtDOM: () => 0, requestMeasure: (measure) => measure.write(measure.read()) };
+  const binder = new RenderedEditorControls(view, { calloutTag: "assistant", onReview: assert.fail, onError: assert.fail });
+  try {
+    binder.update([target]);
+    assert.equal(content.querySelector('[data-callout="ai"] button'), null);
+    assert.equal(content.querySelectorAll('[data-callout="ASSISTANT"] button').length, 2);
+  } finally { binder.destroy(); dom.window.close(); }
+});

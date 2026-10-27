@@ -1,3 +1,5 @@
+import { DEFAULT_CALLOUT_TAG, normalizeCalloutTag } from "./settings-model";
+
 export type ReviewAction = "accept" | "reject";
 
 export interface AiCallout {
@@ -41,7 +43,7 @@ function linesOf(source: string): Line[] {
   return lines;
 }
 
-const aiHeader = /^>\s?\[!ai\](?:[+-])?(?:[ \t]+.*)?$/i;
+const calloutHeader = /^>[ \t]?\[!([a-z0-9][a-z0-9_-]*)\](?:[+-])?(?:[ \t]+.*)?$/i;
 const anotherHeader = /^>[ \t]?\[![^\]]+\]/;
 const paragraphBoundary = /^(?: {0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-+*]|\d+[.)])[ \t]|(?:`{3,}|~{3,})|(?:[-*_][ \t]*){3,}$)|\s*<|\s*%%)/;
 
@@ -50,7 +52,8 @@ const paragraphBoundary = /^(?: {0,3}(?:#{1,6}(?:[ \t]|$)|(?:[-+*]|\d+[.)])[ \t]
  * its own `>` marker. Ambiguous lazy continuations are deliberately not editable.
  * Offsets include the last line ending, so no neighbouring text is re-formatted.
  */
-export function findAiCallouts(source: string): AiCallout[] {
+export function findAiCallouts(source: string, calloutTag = DEFAULT_CALLOUT_TAG): AiCallout[] {
+  const tag = normalizeCalloutTag(calloutTag);
   const lines = linesOf(source);
   const callouts: AiCallout[] = [];
   let fence: { marker: string; length: number } | undefined;
@@ -143,7 +146,7 @@ export function findAiCallouts(source: string): AiCallout[] {
     const bodyLines = lines.slice(i + 1, end);
     const next = lines[end]?.text;
     const ambiguous = next !== undefined && next.trim() !== "" && !paragraphBoundary.test(next);
-    if (aiHeader.test(text) && !ambiguous && !bodyLines.some((body) => anotherHeader.test(body.text))) {
+    if (calloutHeader.exec(text)?.[1]?.toLowerCase() === tag && !ambiguous && !bodyLines.some((body) => anotherHeader.test(body.text))) {
       const last = lines[end - 1]!;
       callouts.push({
         from: line.from, to: last.to,
@@ -158,11 +161,11 @@ export function findAiCallouts(source: string): AiCallout[] {
   return callouts;
 }
 
-export function reviewChange(source: string, target: ReviewTarget, action: ReviewAction): TextChange {
+export function reviewChange(source: string, target: ReviewTarget, action: ReviewAction, calloutTag = DEFAULT_CALLOUT_TAG): TextChange {
   if (source !== target.source) {
     throw new Error("This note changed. Refresh the callout or reopen the note, then try again.");
   }
-  const current = findAiCallouts(source).find((item) => item.from === target.callout.from);
+  const current = findAiCallouts(source, calloutTag).find((item) => item.from === target.callout.from);
   if (!current || current.raw !== target.callout.raw || current.to !== target.callout.to) {
     throw new Error("This AI callout is no longer at its original position. Reopen the note to review it.");
   }

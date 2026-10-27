@@ -10,7 +10,7 @@ import { findAiCallouts } from "../src/callouts.ts";
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const source = "Human.\n\n> [!ai]+ Contribution\n> Proposed text.\n\nAfter.\n";
 
-function harness(text = source) {
+async function harness(text = source, savedData = null) {
   const dom = new JSDOM("<div id='root'></div>");
   const file = new TFile("Example.md");
   const files = new Map([[file.path, { file, text }]]);
@@ -18,6 +18,9 @@ function harness(text = source) {
   let writes = 0;
   let failWrite = false;
   const app = {
+    _document: dom.window.document,
+    _savedData: savedData,
+    optionsUpdated: 0,
     vault: {
       getAbstractFileByPath: (path) => files.get(path)?.file,
       cachedRead: async (file) => files.get(file.path).text,
@@ -29,10 +32,10 @@ function harness(text = source) {
         return next;
       }
     },
-    workspace: { getLeavesOfType: () => leaves }
+    workspace: { getLeavesOfType: () => leaves, updateOptions: () => { app.optionsUpdated++; } }
   };
   const plugin = new AiContributionsPlugin(app);
-  plugin.onload();
+  await plugin.onload();
   const root = dom.window.document.getElementById("root");
   const children = [];
   function callout(parent = root) {
@@ -57,12 +60,12 @@ function harness(text = source) {
   async function settle() { await tick(); await plugin.pending; await tick(); }
   function close() { plugin.onunload(); dom.window.close(); }
   Notice.messages = [];
-  return { dom, plugin, root, callout, context, files, file, leaves, editor, children, settle, close,
+  return { app, dom, plugin, root, callout, context, files, file, leaves, editor, children, settle, close,
     get writes() { return writes; }, set failWrite(value) { failWrite = value; } };
 }
 
 test("Reading view accepts one callout and command undo restores the note", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     const el = h.callout();
     await h.plugin.processor(h.root, h.context());
@@ -78,7 +81,7 @@ test("Reading view accepts one callout and command undo restores the note", asyn
 });
 
 test("reviews use unsaved editor contents instead of overwriting from disk", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     const dirty = source + "Unsaved change.\n";
     const editor = h.editor(dirty);
@@ -95,7 +98,7 @@ test("reviews use unsaved editor contents instead of overwriting from disk", asy
 });
 
 test("Reading view stale controls fail and can be retried after a fresh render", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     const el = h.callout();
     await h.plugin.processor(h.root, h.context());
@@ -110,7 +113,7 @@ test("Reading view stale controls fail and can be retried after a fresh render",
 });
 
 test("write failure leaves source and undo history unchanged", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     const el = h.callout();
     await h.plugin.processor(h.root, h.context());
@@ -124,7 +127,7 @@ test("write failure leaves source and undo history unchanged", async () => {
 });
 
 test("embedded callouts use their own context's source file", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     const other = new TFile("Embedded.md");
     h.files.set(other.path, { file: other, text: "> [!ai]+ Contribution\n> Embedded body\n" });
@@ -140,7 +143,7 @@ test("embedded callouts use their own context's source file", async () => {
 });
 
 test("render lifetime and plugin unload remove controls", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     h.callout(); await h.plugin.processor(h.root, h.context());
     assert.equal(h.root.querySelectorAll(".ai-contributions-actions").length, 1);
@@ -156,7 +159,7 @@ test("render lifetime and plugin unload remove controls", async () => {
 
 test("simultaneous reviews cannot apply the same source snapshot twice", async () => {
   const text = "> [!ai]+ A\n> A\n\n> [!ai]+ B\n> B\n";
-  const h = harness(text);
+  const h = await harness(text);
   try {
     h.callout(); h.callout();
     await h.plugin.processor(h.root, h.context(h.file.path, text, 0, 5));
@@ -169,7 +172,7 @@ test("simultaneous reviews cannot apply the same source snapshot twice", async (
 });
 
 test("undo refuses to overwrite edits made after a review", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     h.callout(); await h.plugin.processor(h.root, h.context());
     h.root.querySelector(".ai-contributions-accept").click(); await h.settle();
@@ -183,7 +186,7 @@ test("undo refuses to overwrite edits made after a review", async () => {
 });
 
 test("CodeMirror reviews resolve the file from the clicked editor, with read-only protection", async () => {
-  const h = harness();
+  const h = await harness();
   try {
     const state = EditorState.create({ doc: source, extensions: [editorInfoField.init(() => ({ file: h.file }))] });
     const fakeView = { state, dispatch(transaction) { this.state = this.state.update(transaction).state; } };
@@ -194,5 +197,86 @@ test("CodeMirror reviews resolve the file from the clicked editor, with read-onl
     const locked = { state: EditorState.create({ doc: source, extensions: [editorInfoField.init(() => ({ file: h.file })), EditorState.readOnly.of(true), EditorView.editable.of(false)] }) };
     await assert.rejects(h.plugin.review(h.file.path, target, "reject", locked), /read-only/);
     await assert.rejects(h.plugin.review("Missing.md", target, "reject", fakeView), /no longer available/);
+  } finally { h.close(); }
+});
+
+test("custom saved tags work in Reading view and leave default AI callouts alone", async () => {
+  const customSource = source + "\n> [!assistant]+ Contribution\n> Custom body.\n";
+  const h = await harness(customSource, { calloutTag: "ASSISTANT" });
+  try {
+    const old = h.callout();
+    const custom = h.callout(); custom.setAttribute("data-callout", "assistant");
+    const callout = findAiCallouts(customSource, "assistant")[0];
+    await h.plugin.processor(h.root, h.context(h.file.path, customSource, callout.startLine, callout.endLine));
+    assert.equal(old.querySelector("button"), null);
+    custom.querySelector(".ai-contributions-accept").click(); await h.settle();
+    assert.equal(h.files.get(h.file.path).text, source + "\nCustom body.\n");
+  } finally { h.close(); }
+});
+
+test("applying a tag persists it, refreshes controls, and invalidates old buttons", async () => {
+  const h = await harness();
+  try {
+    const preview = new MarkdownView(h.file, h.editor(source), "preview"); h.leaves.push({ view: preview });
+    h.callout(); await h.plugin.processor(h.root, h.context());
+    const oldButton = h.root.querySelector(".ai-contributions-reject");
+    const extensions = h.plugin.extension;
+    const oldExtension = extensions[0];
+    await h.plugin.setCalloutTag(" Assistant ");
+    assert.deepEqual(h.app._savedData, { calloutTag: "assistant" });
+    assert.equal(h.plugin.extension, extensions);
+    assert.notEqual(extensions[0], oldExtension);
+    assert.equal(h.app.optionsUpdated, 1);
+    assert.equal(preview.rerenders, 1);
+    assert.equal(h.root.querySelector("button"), null);
+    assert.equal(h.files.get(h.file.path).text, source);
+    oldButton.click(); await h.settle();
+    assert.equal(h.writes, 0);
+    assert.match(Notice.messages.at(-1), /original position/);
+
+    const reloaded = await harness(source, JSON.parse(JSON.stringify(h.app._savedData)));
+    try { assert.equal(reloaded.plugin.settings.calloutTag, "assistant"); }
+    finally { reloaded.close(); }
+    await h.plugin.setCalloutTag("");
+    assert.deepEqual(h.app._savedData, { calloutTag: "ai" });
+  } finally { h.close(); }
+});
+
+test("settings UI reports invalid input and failed saves, then allows a retry", async () => {
+  const h = await harness();
+  try {
+    const tab = h.plugin.settingTabs[0]; tab.display();
+    const input = tab.containerEl.querySelector("input");
+    const button = tab.containerEl.querySelector("button");
+    const error = tab.containerEl.querySelector('[role="alert"]');
+    assert.equal(input.value, "ai");
+    input.value = "[!assistant]"; button.click(); await h.settle();
+    assert.equal(error.hidden, false);
+    assert.match(error.textContent, /Use only/);
+    assert.equal(h.plugin.settings.calloutTag, "ai");
+    assert.equal(h.app.optionsUpdated, 0);
+
+    h.app._failSave = true; input.value = "assistant"; button.click(); await h.settle();
+    assert.match(error.textContent, /Settings write failed/);
+    assert.equal(h.plugin.settings.calloutTag, "ai");
+    assert.equal(h.app._savedData, null);
+    assert.equal(button.disabled, false);
+
+    h.app._failSave = false; button.click(); await h.settle();
+    assert.equal(error.hidden, true);
+    assert.equal(input.getAttribute("aria-invalid"), null);
+    assert.equal(h.plugin.settings.calloutTag, "assistant");
+    assert.deepEqual(h.app._savedData, { calloutTag: "assistant" });
+  } finally { h.close(); }
+});
+
+test("undo history remains usable after changing the tag", async () => {
+  const h = await harness();
+  try {
+    h.callout(); await h.plugin.processor(h.root, h.context());
+    h.root.querySelector(".ai-contributions-accept").click(); await h.settle();
+    await h.plugin.setCalloutTag("assistant");
+    h.plugin.commands[0].checkCallback(false); await h.settle();
+    assert.equal(h.files.get(h.file.path).text, source);
   } finally { h.close(); }
 });

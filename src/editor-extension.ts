@@ -8,6 +8,7 @@ import { createReviewControls } from "./controls";
 import { RenderedEditorControls } from "./rendered-editor";
 
 export interface EditorReviewOptions {
+  calloutTag?: string;
   onReview: (view: EditorView, target: ReviewTarget, action: ReviewAction) => Promise<void>;
   onError: (error: unknown) => void;
 }
@@ -63,7 +64,7 @@ export function createReviewExtension(options: EditorReviewOptions): Extension {
 
     private parse(view: EditorView): ReviewTarget[] {
       const source = view.state.doc.toString();
-      return findAiCallouts(source).map((callout) => ({ source, callout }));
+      return findAiCallouts(source, options.calloutTag).map((callout) => ({ source, callout }));
     }
 
     private decorate(view: EditorView): DecorationSet {

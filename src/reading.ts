@@ -1,4 +1,5 @@
 import { findAiCallouts, type ReviewTarget } from "./callouts";
+import { DEFAULT_CALLOUT_TAG } from "./settings-model";
 
 export interface SectionInfo {
   text: string;
@@ -11,7 +12,7 @@ export interface SectionInfo {
  * the rendered group to actual callouts. Never choose a match by body text.
  */
 export function resolveReadingTargets(
-  source: string, section: SectionInfo | null, renderedCount: number
+  source: string, section: SectionInfo | null, renderedCount: number, calloutTag = DEFAULT_CALLOUT_TAG
 ): ReviewTarget[] | null {
   if (!section || renderedCount < 1 || section.lineStart < 0 || section.lineEnd < section.lineStart) return null;
   const normalize = (text: string): string => text.replace(/\r\n?/g, "\n").trim();
@@ -19,7 +20,7 @@ export function resolveReadingTargets(
   // Obsidian renderers may supply the section text or the complete document.
   // Line positions alone are insufficient for stale or synthetic renderers.
   if (normalize(section.text) !== normalize(source) && normalize(section.text) !== normalize(sectionSource)) return null;
-  const candidates = findAiCallouts(source).filter((callout) =>
+  const candidates = findAiCallouts(source, calloutTag).filter((callout) =>
     callout.startLine >= section.lineStart && callout.endLine <= section.lineEnd);
   if (candidates.length !== renderedCount) return null;
   return candidates.map((callout) => ({ source, callout }));

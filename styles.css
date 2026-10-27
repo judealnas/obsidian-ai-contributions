@@ -9,9 +9,13 @@
   -webkit-user-select: none;
 }
 
-.callout[data-callout="ai"] > .callout-title {
+.callout-title:has(> .ai-contributions-actions) {
   flex-wrap: wrap;
   row-gap: 0.4em;
+}
+
+.ai-contributions-setting-error {
+  color: var(--text-error);
 }
 
 .callout-title > .ai-contributions-actions {

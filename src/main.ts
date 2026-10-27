@@ -1,4 +1,4 @@
-import { EditorState, Transaction } from "@codemirror/state";
+import { EditorState, Transaction, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
   editorInfoField, MarkdownRenderChild, MarkdownView, Notice, Plugin, TFile,
@@ -12,6 +12,8 @@ import { createReviewControls } from "./controls";
 import { createReviewExtension } from "./editor-extension";
 import { ReviewHistory, undoChange, type ReviewRecord } from "./history";
 import { resolveReadingTargets, type SectionInfo } from "./reading";
+import { normalizeCalloutTag, readSettings, type AiContributionsSettings } from "./settings-model";
+import { AiContributionsSettingTab } from "./settings-tab";
 
 class ControlLifetime extends MarkdownRenderChild {
   private dispose: () => void;
@@ -25,21 +27,19 @@ class ControlLifetime extends MarkdownRenderChild {
 }
 
 export default class AiContributionsPlugin extends Plugin {
+  settings: AiContributionsSettings = readSettings(null);
+  private editorExtensions: Extension[] = [];
   private history = new ReviewHistory();
   private controls = new Set<HTMLElement>();
   private pending: Promise<unknown> = Promise.resolve();
   private active = false;
 
-  onload(): void {
+  async onload(): Promise<void> {
+    this.settings = readSettings(await this.loadData());
     this.active = true;
-    this.registerEditorExtension(createReviewExtension({
-      onReview: (view, target, action) => {
-        const path = view.state.field(editorInfoField, false)?.file?.path;
-        if (!path) return Promise.reject(new Error("Open this contribution in its source note to review it."));
-        return this.review(path, target, action, view);
-      },
-      onError: (error) => this.reportError(error)
-    }));
+    this.editorExtensions.push(this.editorExtension());
+    this.registerEditorExtension(this.editorExtensions);
+    this.addSettingTab(new AiContributionsSettingTab(this.app, this));
     this.registerMarkdownPostProcessor((element, context) => this.renderControls(element, context));
     this.addCommand({
       id: "undo-last-review",
@@ -48,6 +48,36 @@ export default class AiContributionsPlugin extends Plugin {
         if (!this.history.peek()) return false;
         if (!checking) void this.enqueue(() => this.undo()).catch((error) => this.reportError(error));
         return true;
+      }
+    });
+  }
+
+  private editorExtension(): Extension {
+    return createReviewExtension({
+      calloutTag: this.settings.calloutTag,
+      onReview: (view, target, action) => {
+        const path = view.state.field(editorInfoField, false)?.file?.path;
+        if (!path) return Promise.reject(new Error("Open this contribution in its source note to review it."));
+        return this.review(path, target, action, view);
+      },
+      onError: (error) => this.reportError(error)
+    });
+  }
+
+  async setCalloutTag(value: string): Promise<void> {
+    const calloutTag = normalizeCalloutTag(value);
+    await this.enqueue(async () => {
+      if (calloutTag === this.settings.calloutTag) return;
+      const next = { calloutTag };
+      await this.saveData(next);
+      if (!this.active) return;
+      this.settings = next;
+      this.controls.forEach((control) => control.remove());
+      this.controls.clear();
+      this.editorExtensions.splice(0, this.editorExtensions.length, this.editorExtension());
+      this.app.workspace.updateOptions();
+      for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+        if (leaf.view instanceof MarkdownView) leaf.view.previewMode.rerender(true);
       }
     });
   }
@@ -74,7 +104,7 @@ export default class AiContributionsPlugin extends Plugin {
 
   private async review(path: string, target: ReviewTarget, action: ReviewAction, cm?: EditorView): Promise<void> {
     return this.enqueue(async () => {
-      const record = await this.editNote(path, (source) => reviewChange(source, target, action), cm);
+      const record = await this.editNote(path, (source) => reviewChange(source, target, action, this.settings.calloutTag), cm);
       this.history.push(record);
       new Notice(`AI contribution ${action === "accept" ? "accepted" : "rejected"}. Undo with “AI Contributions: Undo last review”.`, 6000);
     });
@@ -141,9 +171,11 @@ export default class AiContributionsPlugin extends Plugin {
   }
 
   private async renderControls(element: HTMLElement, context: MarkdownPostProcessorContext): Promise<void> {
+    const tag = this.settings.calloutTag;
+    const selector = `.callout[data-callout="${tag}" i]`;
     const callouts = [
-      ...(element.matches('.callout[data-callout="ai" i]') ? [element] : []),
-      ...element.querySelectorAll<HTMLElement>('.callout[data-callout="ai" i]')
+      ...(element.matches(selector) ? [element] : []),
+      ...element.querySelectorAll<HTMLElement>(selector)
     ].filter((callout) =>
       callout.closest(".markdown-embed") === element.closest(".markdown-embed")
       && !callout.parentElement?.closest(".callout")
@@ -152,7 +184,7 @@ export default class AiContributionsPlugin extends Plugin {
     let source: string;
     try { source = await this.currentSource(context.sourcePath); }
     catch { return; } // Synthetic renders without a source file are display only.
-    if (!this.active) return;
+    if (!this.active || tag !== this.settings.calloutTag) return;
 
     const groups = new Map<string, { section: SectionInfo | null; callouts: HTMLElement[] }>();
     for (const callout of callouts) {
@@ -163,7 +195,7 @@ export default class AiContributionsPlugin extends Plugin {
       groups.set(key, group);
     }
     for (const group of groups.values()) {
-      const targets = resolveReadingTargets(source, group.section, group.callouts.length);
+      const targets = resolveReadingTargets(source, group.section, group.callouts.length, tag);
       group.callouts.forEach((callout, index) => {
         const title = callout.querySelector<HTMLElement>(":scope > .callout-title");
         if (!title || title.querySelector(".ai-contributions-actions")) return;
