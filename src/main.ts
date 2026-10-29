@@ -5,7 +5,7 @@ import {
   type Editor, type MarkdownPostProcessorContext
 } from "obsidian";
 import {
-  applyChange, reviewChange,
+  applyChange, reviewAllChange, reviewChange,
   type ReviewAction, type ReviewTarget, type TextChange
 } from "./callouts";
 import { createReviewControls } from "./controls";
@@ -50,6 +50,18 @@ export default class AiContributionsPlugin extends Plugin {
         return true;
       }
     });
+    for (const action of ["accept", "reject"] as const) {
+      this.addCommand({
+        id: `${action}-all-current-note`,
+        name: `${action === "accept" ? "Accept" : "Reject"} all AI callouts in current note`,
+        checkCallback: (checking) => {
+          const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+          if (!view?.file || view.file.extension !== "md") return false;
+          if (!checking) void this.reviewAll(view.file.path, action).catch((error) => this.reportError(error));
+          return true;
+        }
+      });
+    }
   }
 
   private editorExtension(): Extension {
@@ -107,6 +119,23 @@ export default class AiContributionsPlugin extends Plugin {
       const record = await this.editNote(path, (source) => reviewChange(source, target, action, this.settings.calloutTag), cm);
       this.history.push(record);
       new Notice(`AI contribution ${action === "accept" ? "accepted" : "rejected"}. Undo with “AI Contributions: Undo last review”.`, 6000);
+    });
+  }
+
+  private async reviewAll(path: string, action: ReviewAction): Promise<void> {
+    return this.enqueue(async () => {
+      const source = await this.currentSource(path);
+      const batch = reviewAllChange(source, action, this.settings.calloutTag);
+      if (!batch) {
+        new Notice(`No reviewable [!${this.settings.calloutTag}] callouts in this note.`);
+        return;
+      }
+      const record = await this.editNote(path, (current) => {
+        if (current !== source) throw new Error("This note changed. Run the command again to review its current callouts.");
+        return batch.change;
+      });
+      this.history.push(record);
+      new Notice(`${action === "accept" ? "Accepted" : "Rejected"} ${batch.count} AI callout${batch.count === 1 ? "" : "s"}. Undo with “AI Contributions: Undo last review”.`, 6000);
     });
   }
 

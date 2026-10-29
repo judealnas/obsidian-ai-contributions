@@ -172,6 +172,26 @@ export function reviewChange(source: string, target: ReviewTarget, action: Revie
   return { from: current.from, to: current.to, insert: action === "accept" ? current.body : "" };
 }
 
+/** Review the original callouts together, preserving all text between them. */
+export function reviewAllChange(
+  source: string, action: ReviewAction, calloutTag = DEFAULT_CALLOUT_TAG
+): { change: TextChange; count: number } | null {
+  const callouts = findAiCallouts(source, calloutTag);
+  const first = callouts[0];
+  if (!first) return null;
+  const parts: string[] = [];
+  let cursor = first.from;
+  for (const callout of callouts) {
+    parts.push(source.slice(cursor, callout.from));
+    if (action === "accept") parts.push(callout.body);
+    cursor = callout.to;
+  }
+  return {
+    change: { from: first.from, to: cursor, insert: parts.join("") },
+    count: callouts.length
+  };
+}
+
 export function applyChange(source: string, change: TextChange): string {
   return source.slice(0, change.from) + change.insert + source.slice(change.to);
 }

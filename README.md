@@ -48,7 +48,7 @@ See the [official BRAT installation guide](https://tfthacker.com/brat-quick-guid
 Download the plugin ZIP from [the latest release](https://github.com/judealnas/obsidian-ai-contributions/releases/latest).
 For a source checkout, first run `npm ci` and `npm run package` to create the installable ZIP.
 
-1. Extract `ai-contributions-0.2.0.zip` (or `dist/ai-contributions-0.2.0.zip` after a local build).
+1. Extract `ai-contributions-0.3.0.zip` (or `dist/ai-contributions-0.3.0.zip` after a local build).
 2. Copy the `ai-contributions` folder into `<your vault>/.obsidian/plugins/`.
 3. Reload Obsidian.
 4. Enable **AI Contributions** in **Settings → Community plugins**.
@@ -90,9 +90,16 @@ Only the configured type is reviewable, so selecting a built-in name such as `no
 
 - Click **Accept** to promote one contribution into ordinary Markdown.
 - Click **Reject** to remove one contribution, including its title.
+- Run **AI Contributions: Accept all AI callouts in current note** or **AI Contributions: Reject all AI callouts in current note** to review every eligible callout in the active Markdown note.
+  These commands use the configured tag, include folded callouts, and work in Reading view and the editor.
+  They follow the same Markdown restrictions as individual review buttons and leave linked or embedded notes untouched.
 - Run **AI Contributions: Undo last review** from the command palette to restore the previous review.
   You can assign this command a hotkey in Obsidian settings.
 - Editor actions also participate in the editor's normal undo history.
+
+A bulk review is applied in one operation and occupies one undo entry.
+The undo command restores the entire batch.
+If no eligible callouts are found, the plugin displays a notice without writing the note or adding an undo entry.
 
 The plugin retains up to 20 reviews in memory until it is disabled or Obsidian closes.
 Undo checks that the note still matches the result of that review.

@@ -32,7 +32,11 @@ async function harness(text = source, savedData = null) {
         return next;
       }
     },
-    workspace: { getLeavesOfType: () => leaves, updateOptions: () => { app.optionsUpdated++; } }
+    workspace: {
+      getLeavesOfType: () => leaves,
+      getActiveViewOfType: (type) => app.activeView instanceof type ? app.activeView : null,
+      updateOptions: () => { app.optionsUpdated++; }
+    }
   };
   const plugin = new AiContributionsPlugin(app);
   await plugin.onload();
@@ -278,5 +282,142 @@ test("undo history remains usable after changing the tag", async () => {
     await h.plugin.setCalloutTag("assistant");
     h.plugin.commands[0].checkCallback(false); await h.settle();
     assert.equal(h.files.get(h.file.path).text, source);
+  } finally { h.close(); }
+});
+
+function activateNote(h, mode = "preview", text = h.files.get(h.file.path).text) {
+  const editor = h.editor(text);
+  const view = new MarkdownView(h.file, editor, mode);
+  h.leaves.push({ view });
+  h.app.activeView = view;
+  return { view, editor };
+}
+
+test("bulk commands require an active Markdown note and checking never modifies notes", async () => {
+  const h = await harness();
+  try {
+    for (const command of h.plugin.commands.filter((command) => command.id.endsWith("-all-current-note"))) {
+      assert.equal(command.checkCallback(true), false);
+      assert.equal(command.checkCallback(false), false);
+    }
+    activateNote(h);
+    for (const command of h.plugin.commands.filter((command) => command.id.endsWith("-all-current-note"))) {
+      assert.equal(command.checkCallback(true), true);
+    }
+    await h.settle();
+    assert.equal(h.writes, 0);
+    assert.equal(h.files.get(h.file.path).text, source);
+    assert.equal(h.plugin.history.peek(), undefined);
+    h.app.activeView.file = null;
+    assert.equal(h.plugin.commands.find((command) => command.id === "accept-all-current-note").checkCallback(true), false);
+  } finally { h.close(); }
+});
+
+test("both bulk commands apply once to the current note and undo the entire batch", async () => {
+  const text = "Human.\n\n> [!ai]+ First\n> One.\n\nHuman between.\n\n> [!ai]- Second\n> Two.\n\n![[Other]]\n";
+  for (const action of ["accept", "reject"]) {
+    const h = await harness(text);
+    try {
+      activateNote(h);
+      const other = new TFile("Other.md"); h.files.set(other.path, { file: other, text });
+      const command = h.plugin.commands.find((command) => command.id === `${action}-all-current-note`);
+      assert.equal(command.checkCallback(false), true); await h.settle();
+      const expected = action === "accept"
+        ? "Human.\n\nOne.\n\nHuman between.\n\nTwo.\n\n![[Other]]\n"
+        : "Human.\n\n\nHuman between.\n\n\n![[Other]]\n";
+      assert.equal(h.files.get(h.file.path).text, expected);
+      assert.equal(h.files.get(other.path).text, text);
+      assert.equal(h.writes, 1);
+      assert.match(Notice.messages.at(-1), /2 AI callouts/);
+      h.plugin.commands[0].checkCallback(false); await h.settle();
+      assert.equal(h.files.get(h.file.path).text, text);
+      assert.equal(h.plugin.commands[0].checkCallback(true), false);
+    } finally { h.close(); }
+  }
+});
+
+test("bulk review changes unsaved editor text in one edit and preserves the disk snapshot", async () => {
+  const dirty = source + "\n> [!ai]\n> Unsaved proposal.\n\nUnsaved human text.\n";
+  for (const action of ["accept", "reject"]) {
+    const h = await harness();
+    try {
+      const { editor } = activateNote(h, "source", dirty);
+      let edits = 0;
+      const replace = editor.replaceRange.bind(editor);
+      editor.replaceRange = (...args) => { edits++; replace(...args); };
+      h.plugin.commands.find((command) => command.id === `${action}-all-current-note`).checkCallback(false);
+      await h.settle();
+      assert.equal(edits, 1);
+      assert.equal(h.writes, 0);
+      assert.equal(h.files.get(h.file.path).text, source);
+      assert.equal(editor.text, action === "accept"
+        ? "Human.\n\nProposed text.\n\nAfter.\n\nUnsaved proposal.\n\nUnsaved human text.\n"
+        : "Human.\n\n\nAfter.\n\n\nUnsaved human text.\n");
+      h.plugin.commands[0].checkCallback(false); await h.settle();
+      assert.equal(editor.text, dirty);
+      assert.equal(edits, 2);
+    } finally { h.close(); }
+  }
+});
+
+test("bulk commands honor custom tags and no-match commands do not create undo entries", async () => {
+  const text = source + "\n> [!assistant]\n> Custom\n";
+  const h = await harness(text, { calloutTag: "assistant" });
+  try {
+    activateNote(h);
+    const command = h.plugin.commands.find((command) => command.id === "reject-all-current-note");
+    command.checkCallback(false); await h.settle();
+    assert.equal(h.files.get(h.file.path).text, source + "\n");
+    const record = h.plugin.history.peek();
+    command.checkCallback(false); await h.settle();
+    assert.equal(h.writes, 1);
+    assert.equal(h.plugin.history.peek(), record);
+    assert.match(Notice.messages.at(-1), /No reviewable \[!assistant\]/);
+  } finally { h.close(); }
+});
+
+test("bulk review keeps the note selected when invoked even if focus switches while queued", async () => {
+  const h = await harness();
+  try {
+    activateNote(h);
+    const other = new TFile("Other.md"); h.files.set(other.path, { file: other, text: source });
+    let resume;
+    h.plugin.pending = new Promise((resolve) => { resume = resolve; });
+    h.plugin.commands.find((command) => command.id === "accept-all-current-note").checkCallback(false);
+    h.app.activeView = new MarkdownView(other, h.editor(source), "preview");
+    h.leaves.push({ view: h.app.activeView });
+    resume(); await h.settle();
+    assert.equal(h.files.get(h.file.path).text, "Human.\n\nProposed text.\n\nAfter.\n");
+    assert.equal(h.files.get(other.path).text, source);
+  } finally { h.close(); }
+});
+
+test("stale bulk snapshots abort without partially reviewing callouts", async () => {
+  const h = await harness();
+  try {
+    activateNote(h);
+    h.app.vault.cachedRead = async () => {
+      h.files.get(h.file.path).text = source + "External edit.\n";
+      return source;
+    };
+    h.plugin.commands.find((command) => command.id === "reject-all-current-note").checkCallback(false);
+    await h.settle();
+    assert.equal(h.files.get(h.file.path).text, source + "External edit.\n");
+    assert.equal(h.writes, 0);
+    assert.equal(h.plugin.history.peek(), undefined);
+    assert.match(Notice.messages.at(-1), /note changed/);
+  } finally { h.close(); }
+});
+
+test("bulk write failures preserve note content and undo history", async () => {
+  const h = await harness();
+  try {
+    activateNote(h); h.failWrite = true;
+    h.plugin.commands.find((command) => command.id === "reject-all-current-note").checkCallback(false);
+    await h.settle();
+    assert.equal(h.files.get(h.file.path).text, source);
+    assert.equal(h.plugin.history.peek(), undefined);
+    assert.equal(h.writes, 0);
+    assert.match(Notice.messages.at(-1), /Disk write failed/);
   } finally { h.close(); }
 });

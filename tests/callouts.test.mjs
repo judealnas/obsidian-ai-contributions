@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findAiCallouts, reviewChange, applyChange } from "../src/callouts.ts";
+import { findAiCallouts, reviewAllChange, reviewChange, applyChange } from "../src/callouts.ts";
 import { ReviewHistory, undoChange } from "../src/history.ts";
 
 function review(source, action = "accept", index = 0) {
@@ -108,4 +108,34 @@ test("session history has a limit and supports ordered undo", () => {
   history.pop(); assert.equal(history.peek().path, "2");
   history.pop(); assert.equal(history.peek(), undefined);
   history.push({ path: "4" }); history.clear(); assert.equal(history.peek(), undefined);
+});
+
+test("accept all preserves human text between duplicate callouts and unwraps each once", () => {
+  const source = "Before\n\n> [!ai]+ First\n> Same\n\nHuman between\n\n> [!ai]- Second\n> Same\n\nAfter\n";
+  const batch = reviewAllChange(source, "accept");
+  assert.equal(batch.count, 2);
+  const after = applyChange(source, batch.change);
+  assert.equal(after, "Before\n\nSame\n\nHuman between\n\nSame\n\nAfter\n");
+  assert.equal(applyChange(after, undoChange(after, { path: "Example.md", before: source, after, change: batch.change })), source);
+});
+
+test("reject all uses the configured tag and preserves examples, metadata, and line endings", () => {
+  const source = "---\r\n_AI_Generated: true\r\n---\r\n\r\n> [!ai]\r\n> Keep default\r\n\r\n> [!assistant]+ First\r\n> Remove first\r\n\r\n```md\r\n> [!assistant]\r\n> Keep example\r\n```\r\n\r\n> [!ASSISTANT]- Second\r\n> Remove second";
+  const batch = reviewAllChange(source, "reject", "assistant");
+  assert.equal(batch.count, 2);
+  assert.equal(applyChange(source, batch.change), "---\r\n_AI_Generated: true\r\n---\r\n\r\n> [!ai]\r\n> Keep default\r\n\r\n\r\n```md\r\n> [!assistant]\r\n> Keep example\r\n```\r\n\r\n");
+});
+
+test("bulk review never recursively processes a callout revealed by accepting its parent", () => {
+  const source = "> [!ai]+ Outer\n> > [!ai]+ Nested\n> > Keep the nested wrapper\n";
+  const batch = reviewAllChange(source, "accept");
+  assert.equal(batch.count, 1);
+  assert.equal(applyChange(source, batch.change), "> [!ai]+ Nested\n> Keep the nested wrapper\n");
+});
+
+test("bulk review reports no change when the note has no reviewable callouts", () => {
+  for (const source of ["", "Human text\n", "```md\n> [!ai]\n> Example\n```", "> [!note]\n> Keep\n", "> [!ai]\n> Body\nLazy continuation\n"]) {
+    assert.equal(reviewAllChange(source, "accept"), null);
+    assert.equal(reviewAllChange(source, "reject"), null);
+  }
 });
